@@ -1,0 +1,226 @@
+# Default values for bifrost.
+
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+
+  # Specify the configuration
+  config: |
+    # A complete example in the upstream repository
+    # Ref: https://github.com/freepik-company/bifrost
+
+  serviceAccount:
+    # Specifies whether a service account should be created
+    create: true
+    # Annotations to add to the service account
+    annotations: { }
+    # The name of the service account to use.
+    # If not set and create is true, a name is generated using the fullname template
+    name: "bifrost"
+
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/freepik-company/bifrost
+    pullPolicy: IfNotPresent
+    # Overrides the image tag whose default is the chart appVersion.
+    tag: ""
+
+  imagePullSecrets: []
+
+  # extraInitContainers is a list of init containers. Specified as a YAML list.
+  # This is useful if you need to run a script to provision TLS certificates or
+  # write out configuration files in a dynamic way.
+  extraInitContainers: null
+    # # This example installs a plugin pulled from github into the /usr/local/libexec/vault/oauthapp folder,
+    # # which is defined in the volumes value.
+    # - name: something
+    #   image: "alpine"
+    #   command: [sh, -c]
+    #   args: []
+    #   volumeMounts: []
+
+  # extraContainers is a list of sidecar containers. Specified as a YAML list.
+  extraContainers: null
+
+  # Extra args to pass to the agent.
+  # Ref: https://github.com/achetronic/bifrost?tab=readme-ov-file#flags
+  # Example:
+  # - --log-level=debug
+  extraArgs: []
+
+  # Define a list of environment variables used inside the controller
+  # Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#use-configmap-defined-environment-variables-in-pod-commands
+  # - name: SPECIAL_LEVEL_KEY
+  #   valueFrom:
+  #     configMapKeyRef:
+  #       name: special-config
+  #       key: SPECIAL_LEVEL
+  env: []
+
+  # Define a list of environment variables coming from a ConfigMap or a Secret
+  # - configMapRef:
+  #     name: special-config
+  # Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#configure-all-key-value-pairs-in-a-configmap-as-container-environment-variables
+  envFrom: []
+
+  # Define a list of extra volumes to mount into the controller
+  # Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-pod-configmap/#populate-a-volume-with-data-stored-in-a-configmap
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  #
+  annotations: {}
+  podAnnotations: {}
+
+  #
+  extraLabels: {}
+  extraPodLabels: {}
+
+  #
+  podSecurityContext: {}
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    # readOnlyRootFilesystem: true
+    # runAsNonRoot: true
+    # runAsUser: 1000
+
+  resources: {}
+    # We usually recommend not to specify default resources and to leave this as a conscious
+    # choice for the user. This also increases chances charts run on environments with little
+    # resources, such as Minikube. If you do want to specify resources, uncomment the following
+    # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  # Pod Disruption Budget configurations
+  disruption:
+    annotations: {}
+    minAvailable: 2
+    #maxUnavailable: 1
+
+  # Horizontal Pod Autoscaling configurations
+  autoscaling:
+    annotations: {}
+    minReplicas: 1
+    maxReplicas: 5
+
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80
+
+    ## see https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/#autoscaling-on-multiple-metrics-and-custom-metrics
+    customRules: []
+
+    ## see https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#support-for-configurable-scaling-behavior
+    behavior: {}
+
+  #
+  service:
+    enabled: true
+    # clusterIP controls whether a Cluster IP address is attached to the
+    # service within Kubernetes. By default, the service will
+    # be given a Cluster IP address, set to None to disable. When disabled
+    # Kubernetes will create a "headless" service. Headless services can be
+    # used to communicate with pods directly through DNS instead of a round-robin
+    # load balancer.
+    # clusterIP: None
+
+    # Configures the service type for the main service. Can be ClusterIP
+    # or NodePort.
+    type: ClusterIP
+
+    # The IP family and IP families options are to set the behaviour in a dual-stack environment.
+    # Omitting these values will let the service fall back to whatever the CNI dictates the defaults
+    # should be.
+    # These are only supported for kubernetes versions >=1.23.0
+    #
+    # Configures the service's supported IP family policy, can be either:
+    #     SingleStack: Single-stack service. The control plane allocates a cluster IP for the Service, using the first configured service cluster IP range.
+    #     PreferDualStack: Allocates IPv4 and IPv6 cluster IPs for the Service.
+    #     RequireDualStack: Allocates Service .spec.ClusterIPs from both IPv4 and IPv6 address ranges.
+    ipFamilyPolicy: ""
+
+    # Sets the families that should be supported and the order in which they should be applied to ClusterIP as well.
+    # Can be IPv4 and/or IPv6.
+    ipFamilies: []
+
+    # Do not wait for pods to be ready before including them in the services' targets.
+    publishNotReadyAddresses: true
+
+    # The externalTrafficPolicy can be set to either Cluster or Local
+    # and is only valid for LoadBalancer and NodePort service types.
+    # The default value is Cluster.
+    # ref: https://kubernetes.io/docs/concepts/services-networking/service/#external-traffic-policy
+    #externalTrafficPolicy: Cluster
+
+    # If type is set to "NodePort", a specific nodePort value can be configured,
+    # will be random if left blank.
+    # nodePort: 30000
+
+    ports: []
+      # - name: example
+      #   port: 8099
+      #   targetPort: 8099
+
+    # Extra annotations for the service definition. This can either be YAML or a
+    # YAML-formatted multi-line templated string map of the annotations to apply
+    # to the service.
+    annotations: {}
+
+  monitoring:
+
+    serviceMonitor:
+      enabled: false
+
+      # Additional labels for the service monitor.
+      additionalLabels: {}
+
+      # Scrape interval. If not set, the Prometheus default scrape interval is used.
+      interval: ""
+
+      # MetricRelabelConfigs to apply to samples after scraping, but before ingestion.
+      # ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#relabelconfig
+      metricRelabelings: []
+      # - action: keep
+      #   regex: 'kube_(daemonset|deployment|pod|namespace|node|statefulset).+'
+      #   sourceLabels: [__name__]
+
+      # Customize tls parameters for the service monitor
+      tlsConfig: {}
+
+      # RelabelConfigs to apply to samples before scraping
+      # ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#relabelconfig
+      relabelings: []
+      # - sourceLabels: [__meta_kubernetes_pod_node_name]
+      #   separator: ;
+      #   regex: ^(.*)$
+      #   targetLabel: nodename
+      #   replacement: $1
+      #   action: replace
+
+# Define some extra resources to be created
+# This section is useful when you need ExternalResource or Secrets, etc.
+extraResources: []
+  # - apiVersion: v1
+  #   kind: Secret
+  #   metadata:
+  #     name: example-secret
+  #     labels: {}
+  #   type: Opaque
+  #   stringData:
+  #     username: admin
+  #     password: mypassword
