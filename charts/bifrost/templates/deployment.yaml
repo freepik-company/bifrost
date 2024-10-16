@@ -50,7 +50,6 @@ spec:
           imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           command:
             - /bifrost
-            - run
             - --config
             - /etc/server/bifrost.yaml
 
