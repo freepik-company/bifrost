@@ -38,6 +38,8 @@ authentication:
     # When the credentials are found, the request is re-signed with them and forwarded to the buckets' service.
     # When they are not found, the request is rejected.
     type: s3
+    s3:
+      signatureVerification: false
 
     # TBD: Add support for other authentication types
 

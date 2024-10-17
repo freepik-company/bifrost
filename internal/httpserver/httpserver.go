@@ -217,7 +217,9 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	}
 
 	// Verify the signature of the request when using S3 credentials for client authentication
-	if globals.Application.Config.Authentication.ClientCredentials.Type == "s3" {
+	if globals.Application.Config.Authentication.ClientCredentials.Type == "s3" &&
+		globals.Application.Config.Authentication.ClientCredentials.S3.SignatureVerification {
+
 		isValid, localErr := isValidSignature(request, bucketCredential)
 		if localErr != nil {
 			err = fmt.Errorf("failed to validate request signature: %s", localErr.Error())

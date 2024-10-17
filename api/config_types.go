@@ -63,14 +63,19 @@ type BucketCredentialT struct {
 type ClientCredentialsT struct {
 	Type string                 `yaml:"type"`
 	None NoneClientCredentialsT `yaml:"none,omitempty"`
+	S3   S3ClientCredentialsT   `yaml:"s3,omitempty"`
+}
+
+type BucketCredentialRefT struct {
+	Name string `yaml:"name"`
 }
 
 type NoneClientCredentialsT struct {
 	BucketCredentialRef BucketCredentialRefT `yaml:"bucketCredentialRef"`
 }
 
-type BucketCredentialRefT struct {
-	Name string `yaml:"name"`
+type S3ClientCredentialsT struct {
+	SignatureVerification bool `yaml:"signatureVerification"`
 }
 
 type ModifierT struct {
