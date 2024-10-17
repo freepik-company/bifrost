@@ -36,11 +36,22 @@ func SignS3Version4(cfg *aws.Config, req *http.Request, requestBody *[]byte) (er
 	// Restore the content-length to the original value
 	req.ContentLength = int64(len(*requestBody))
 
+	// Trust the X-Amz-Date header if it is present in the request
+	signingTime := time.Now()
+	dateHeader := req.Header.Get("x-amz-date")
+	if dateHeader != "" {
+
+		signingTime, err = time.Parse("20060102T150405Z", dateHeader)
+		if err != nil {
+			return fmt.Errorf("invalid X-Amz-Date header format: %v", err)
+		}
+	}
+
 	// Create a new signer for the version 4 (S3 uses version 4 of the signatures)
 	signer := v4.NewSigner()
 
 	// Generate the signature for the request using the loaded credentials
-	err = signer.SignHTTP(context.TODO(), awsCredentials, req, payloadHash, "s3", cfg.Region, time.Now())
+	err = signer.SignHTTP(context.TODO(), awsCredentials, req, payloadHash, "s3", cfg.Region, signingTime)
 	if err != nil {
 		return fmt.Errorf("error signing request: %s", err.Error())
 	}

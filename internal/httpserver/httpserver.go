@@ -135,6 +135,8 @@ func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) 
 // It produces another signature over the same request and compares them
 func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Request, requestBody *[]byte) (bool, error) {
 
+	globals.Application.Logger.Debugf("[signature validation] client original request: %v", request)
+
 	// Craft a new request to be fake-signed
 	simulatedReq, err := http.NewRequest(request.Method, request.URL.String(), io.NopCloser(bytes.NewReader(*requestBody)))
 	if err != nil {
@@ -143,6 +145,7 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 
 	// Copy relevant data from original request
 	simulatedReq.Host = request.Host
+	simulatedReq.URL.RawQuery = request.URL.RawQuery
 
 	// Copy only the signed headers from the original request
 	originAuthSignedHeadersParam, err := getRequestAuthParam(request, "signedheaders")
@@ -153,14 +156,22 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 	requestSignedHeaders := strings.Split(originAuthSignedHeadersParam, ";")
 
 	for _, signedHeader := range requestSignedHeaders {
+		if strings.EqualFold(signedHeader, "host") {
+			continue
+		}
+
 		simulatedReq.Header.Add(signedHeader, request.Header.Get(signedHeader))
 	}
+
+	globals.Application.Logger.Debugf("[signature validation] simulated request before signing: %v", simulatedReq)
 
 	// Sign the faked request with provided credentials
 	err = signature.SignS3Version4(bucketCredential.AwsConfig, simulatedReq, requestBody)
 	if err != nil {
 		return false, fmt.Errorf("failed to sign simulated request: %s", err.Error())
 	}
+
+	globals.Application.Logger.Debugf("[signature validation] simulated request after signing: %v", simulatedReq)
 
 	// Get both signatures and compare them
 	originSignatureParam, err := getRequestAuthParam(request, "signature")
