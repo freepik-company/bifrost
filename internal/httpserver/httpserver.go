@@ -36,9 +36,59 @@ func NewHttpServer() (server *HttpServer) {
 	return server
 }
 
-// getRequestAuthBucketCredential returns the bucket credential associated with the request
+// getRequestAuthParam extracts a parameter from the Authorization header of the request
+// The header value is expected to be in the format: <Auth type> <Param1=value1,Param2=value2>
+func getRequestAuthParam(request *http.Request, param string) (string, error) {
+
+	authHeader := request.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("authorization header not found")
+	}
+
+	//
+	invalidAuthHeaderMessage := "invalid authorization header"
+
+	authHeaderParts := strings.Split(authHeader, " ")
+	if len(authHeaderParts) < 2 {
+		return "", fmt.Errorf(invalidAuthHeaderMessage)
+	}
+
+	if strings.ToUpper(authHeaderParts[0]) != "AWS4-HMAC-SHA256" {
+		return "", fmt.Errorf(invalidAuthHeaderMessage)
+	}
+
+	// Sanitize potential unwanted spaces
+	authHeaderParamsStr := ""
+	if len(authHeaderParts) >= 2 {
+		for i, part := range authHeaderParts {
+			if i == 0 {
+				continue
+			}
+
+			authHeaderParamsStr += part
+		}
+	}
+
+	// Split the auth header params
+	authHeaderParams := strings.Split(authHeaderParamsStr, ",")
+	for _, paramObj := range authHeaderParams {
+		partParts := strings.Split(paramObj, "=")
+		if len(partParts) != 2 {
+			return "", fmt.Errorf(invalidAuthHeaderMessage)
+		}
+
+		if strings.EqualFold(strings.TrimSpace(partParts[0]), param) {
+			return strings.TrimSpace(partParts[1]), nil
+		}
+	}
+
+	//
+	return "", nil
+}
+
+// getBucketCredential returns the bucket credential associated with the request
 // TODO: Refactor to transform into a map[string]func(*http.Request) (*api.BucketCredentialT, error)
-func getRequestAuthBucketCredential(request *http.Request) (*api.BucketCredentialT, error) {
+func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) {
 
 	switch globals.Application.Config.Authentication.ClientCredentials.Type {
 	case "none":
@@ -57,43 +107,21 @@ func getRequestAuthBucketCredential(request *http.Request) (*api.BucketCredentia
 
 	case "s3":
 
-		invalidAuthHeaderMessage := "invalid authorization header"
-
-		authHeader := request.Header.Get("Authorization")
-		if authHeader == "" {
-			return nil, fmt.Errorf("authorization header not found")
+		headerAuthCredentialParam, err := getRequestAuthParam(request, "credential")
+		if err != nil {
+			return nil, fmt.Errorf("failed to get credential from 'authorization' header: %s", err.Error())
 		}
 
-		authHeaderParts := strings.Split(authHeader, " ")
-		if len(authHeaderParts) != 2 {
-			return nil, fmt.Errorf(invalidAuthHeaderMessage)
+		credentialParts := strings.Split(headerAuthCredentialParam, "/")
+		if len(credentialParts) != 5 {
+			return nil, fmt.Errorf("invalid authorization header")
 		}
 
-		if strings.ToUpper(authHeaderParts[0]) != "AWS4-HMAC-SHA256" {
-			return nil, fmt.Errorf(invalidAuthHeaderMessage)
-		}
+		accessKeyId := credentialParts[0]
+		for _, credentialObj := range globals.Application.Config.Authentication.BucketCredentials {
 
-		authHeaderParams := strings.Split(authHeaderParts[1], ",")
-		for _, paramObj := range authHeaderParams {
-			partParts := strings.Split(paramObj, "=")
-			if len(partParts) != 2 {
-				return nil, fmt.Errorf(invalidAuthHeaderMessage)
-			}
-
-			if strings.ToUpper(partParts[0]) == "CREDENTIAL" {
-
-				credentialParts := strings.Split(partParts[1], "/")
-				if len(credentialParts) != 5 {
-					return nil, fmt.Errorf(invalidAuthHeaderMessage)
-				}
-
-				accessKeyId := credentialParts[0]
-				for _, credentialObj := range globals.Application.Config.Authentication.BucketCredentials {
-
-					if credentialObj.AccessKeyId == accessKeyId {
-						return &credentialObj, nil
-					}
-				}
+			if credentialObj.AccessKeyId == accessKeyId {
+				return &credentialObj, nil
 			}
 		}
 	}
@@ -102,7 +130,59 @@ func getRequestAuthBucketCredential(request *http.Request) (*api.BucketCredentia
 	return nil, fmt.Errorf("unable to find bucket credential")
 }
 
+// isValidSignature verifies the signature of the request using the provided bucket credential
+// It produces another signature over the same request and compares them
+func isValidSignature(request *http.Request, bucketCredential *api.BucketCredentialT) (bool, error) {
+
+	// Craft a new request to be fake-signed
+	simulatedReq, err := http.NewRequest(request.Method, request.URL.String(), request.Body)
+	if err != nil {
+		return false, fmt.Errorf("failed to create simulated request: %s", err.Error())
+	}
+
+	// Copy relevant data from original request
+	simulatedReq.Host = request.Host
+	simulatedReq.Body = request.Body
+
+	// Copy only the signed headers from the original request
+	originAuthSignedHeadersParam, err := getRequestAuthParam(request, "signedheaders")
+	if err != nil {
+		return false, fmt.Errorf("failed to get 'signedheaders' param from origin 'authorization' header: %s", err.Error())
+	}
+
+	requestSignedHeaders := strings.Split(originAuthSignedHeadersParam, ";")
+	for _, signedHeader := range requestSignedHeaders {
+		simulatedReq.Header.Add(signedHeader, request.Header.Get(signedHeader))
+	}
+
+	// Sign the faked request with provided credentials
+	err = signature.SignS3Version4(simulatedReq, bucketCredential.AwsConfig)
+	if err != nil {
+		return false, fmt.Errorf("failed to sign simulated request: %s", err.Error())
+	}
+
+	// Get both signatures and compare them
+	originSignatureParam, err := getRequestAuthParam(request, "signature")
+	if err != nil {
+		return false, fmt.Errorf("failed to get 'signature' from origin 'authorization' header: %s", err.Error())
+	}
+
+	simulatedSignatureParam, err := getRequestAuthParam(simulatedReq, "signature")
+	if err != nil {
+		return false, fmt.Errorf("failed to get 'signature' from simulated 'authorization' header: %s", err.Error())
+	}
+
+	if originSignatureParam != simulatedSignatureParam {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// TODO
 func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.Request) {
+
+	var err, localErr error
 
 	requestId := generateRandToken()
 
@@ -116,7 +196,6 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		request.Header,
 	)
 
-	var err error
 	defer func() {
 		if err != nil {
 			globals.Application.Logger.Errorf(
@@ -131,10 +210,24 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	}()
 
 	// Get a proper bucket credential for the current request
-	bucketCredential, err := getRequestAuthBucketCredential(request)
-	if err != nil {
-		err = fmt.Errorf("failed to select a bucket credential from request data: %s", err.Error())
+	bucketCredential, localErr := getBucketCredential(request)
+	if localErr != nil {
+		err = fmt.Errorf("failed to select a bucket credential from request data: %s", localErr.Error())
 		return
+	}
+
+	// Verify the signature of the request when using S3 credentials for client authentication
+	if globals.Application.Config.Authentication.ClientCredentials.Type == "s3" {
+		isValid, localErr := isValidSignature(request, bucketCredential)
+		if localErr != nil {
+			err = fmt.Errorf("failed to validate request signature: %s", localErr.Error())
+			return
+		}
+
+		if !isValid {
+			err = fmt.Errorf("signature validation failed")
+			return
+		}
 	}
 
 	// Generate a new client per request.
@@ -155,12 +248,14 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	// Create a bare new request against the target
 	// This is a clone of the original request with some params changed such as: the Host and the URL
 	targetHostString := strings.Join([]string{globals.Application.Config.Target.Host, globals.Application.Config.Target.Port}, ":")
+	_ = targetHostString
+
 	targetRequestUrl := fmt.Sprintf("%s://%s%s",
 		globals.Application.Config.Target.Scheme, targetHostString, request.URL.Path+"?"+request.URL.RawQuery)
 
-	targetReq, err := http.NewRequest(request.Method, targetRequestUrl, request.Body)
-	if err != nil {
-		err = fmt.Errorf("failed to create request: %s", err.Error())
+	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, request.Body)
+	if localErr != nil {
+		err = fmt.Errorf("failed to create request: %s", localErr.Error())
 		return
 	}
 	targetReq.Host = targetHostString
@@ -178,9 +273,9 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	}
 
 	// Sign the request
-	err = signature.SignS3Version4(targetReq, bucketCredential.AwsConfig)
-	if err != nil {
-		err = fmt.Errorf("failed to sign request: %s", err.Error())
+	localErr = signature.SignS3Version4(targetReq, bucketCredential.AwsConfig)
+	if localErr != nil {
+		err = fmt.Errorf("failed to sign request: %s", localErr.Error())
 		return
 	}
 
@@ -195,9 +290,9 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	)
 
 	//
-	targetResponse, err := targetClient.Do(targetReq)
-	if err != nil {
-		err = fmt.Errorf("failed to deliver request: %s", err.Error())
+	targetResponse, localErr := targetClient.Do(targetReq)
+	if localErr != nil {
+		err = fmt.Errorf("failed to deliver request: %s", localErr.Error())
 		return
 	}
 
@@ -212,9 +307,9 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	response.WriteHeader(targetResponse.StatusCode)
 
 	// Clone the data without trully reading it
-	_, err = io.Copy(response, targetResponse.Body)
-	if err != nil {
-		err = fmt.Errorf("failed copying body to the frontend: %s", err.Error())
+	_, localErr = io.Copy(response, targetResponse.Body)
+	if localErr != nil {
+		err = fmt.Errorf("failed copying body to the frontend: %s", localErr.Error())
 		return
 	}
 
