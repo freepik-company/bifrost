@@ -52,6 +52,12 @@ func main() {
 
 	globals.Application.Config = configContent
 
+	// Init config carried fields
+	err = config.Init()
+	if err != nil {
+		globals.Application.Logger.Fatalf(fmt.Sprintf("failed initializing configuration: %s", err.Error()))
+	}
+
 	/////////////////////////////
 	// EXECUTION FLOW RELATED
 	/////////////////////////////

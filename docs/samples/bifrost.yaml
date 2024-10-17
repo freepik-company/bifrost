@@ -13,24 +13,33 @@ listener:
 
 # (Optional) Authentication configuration
 authentication:
-  type: none
 
-  # TBD: Add support for other authentication types
-  # next types will be implemented in the future
+  bucketCredentials:
+    - name: aws
+      accessKeyId: "${AWS_ACCESS_KEY_ID_01}"
+      secretAccessKey: "${AWS_SECRET_ACCESS_KEY_01}"
+      region: "eu-west-1"
 
-  # Basic authentication params
-  #type: basic
-  #basic:
-  #  username: "admin"
-  #  password: "admin"
+    - name: ovh
+      accessKeyId: "${AWS_ACCESS_KEY_ID_02}"
+      secretAccessKey: "${AWS_SECRET_ACCESS_KEY_02}"
+      region: "gra"
 
-  # Bearer authentication params
-  #type: bearer
-  #bearer:
-  #  headerName: authorization
-  #  allowedTokens:
-  #    - asdf1234xxxx
-  #    - 1234asdfyyyy
+  clientCredentials:
+
+    # Authorization is omited for the client (its related credentials are ignored)
+    # Selected server-side credential is used to sign the request
+    #type: none
+    #none:
+    #  bucketCredentialRef:
+    #    name: aws
+
+    # AccessKeyId is extracted from the request headers, and is used to look for the credentials in 'bucketCredentials'
+    # When the credentials are found, the request is re-signed with them and forwarded to the buckets' service.
+    # When they are not found, the request is rejected.
+    type: s3
+
+    # TBD: Add support for other authentication types
 
 # (Optional) List of modifiers to apply to the request before signing it
 modifiers:
@@ -38,11 +47,6 @@ modifiers:
     path:
       pattern: ^(/[a-zA-Z0-9\-_]/)
       replace: ""
-
-  - type: signature
-    signature:
-      type: s3
-      version: v4 # v2, v4
 
 # (Required) Target where the request will be forwarded
 target:

@@ -1,111 +1,30 @@
 package httpserver
 
 import (
-	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
-	"regexp"
+	"reflect"
 	"strings"
-	"time"
 
 	//
+	"bifrost/api"
 	"bifrost/internal/globals"
 	"bifrost/internal/signature"
-
-	"github.com/aws/aws-sdk-go-v2/config"
 )
 
 const (
 	statusServiceUnavailableBody = "Service Unavailable"
 )
 
-var (
-// TargetHostString = strings.Join([]string{globals.Application.Config.Target.Host, globals.Application.Config.Target.Port}, ":")
-)
-
 type HttpServer struct {
 	*http.Server
 }
 
-// TODO: Move this to the config package (or main)
-func initConfig() {
-	listenerReadTimeoutDuration, err := time.ParseDuration(globals.Application.Config.Listener.Options.ReadTimeout)
-	if err != nil {
-		log.Fatal("unable to parse listener read timeout duration")
-	}
-
-	globals.Application.Config.Listener.Options.ReadTimeoutDuration = &listenerReadTimeoutDuration
-
-	// TODO
-	listenerWriteTimeoutDuration, err := time.ParseDuration(globals.Application.Config.Listener.Options.WriteTimeout)
-	if err != nil {
-		log.Fatal("unable to parse listener write timeout duration")
-	}
-
-	globals.Application.Config.Listener.Options.WriteTimeoutDuration = &listenerWriteTimeoutDuration
-
-	// TODO
-	targetDialTimeoutDuration, err := time.ParseDuration(globals.Application.Config.Target.Options.DialTimeout)
-	if err != nil {
-		log.Fatal("unable to parse target dial timeout duration")
-	}
-
-	globals.Application.Config.Target.Options.DialTimeoutDuration = &targetDialTimeoutDuration
-
-	// TODO
-	targetKeepAliveDuration, err := time.ParseDuration(globals.Application.Config.Target.Options.KeepAlive)
-	if err != nil {
-		log.Fatal("unable to parse target keep-alive duration")
-	}
-
-	globals.Application.Config.Target.Options.KeepAliveDuration = &targetKeepAliveDuration
-
-	// TODO
-	for index, mod := range globals.Application.Config.Modifiers {
-		// Compile regex for path modifiers
-		if mod.Type == "path" {
-			globals.Application.Config.Modifiers[index].Path.CompiledRegex = regexp.MustCompile(mod.Path.Pattern)
-		}
-
-		// Load AWS default config for signature modifiers
-		if mod.Type == "signature" && mod.Signature.Type == "s3" {
-			cfg, err := config.LoadDefaultConfig(context.TODO())
-			if err != nil {
-				log.Fatalf("unable to load SDK config, %v", err)
-			}
-
-			globals.Application.Config.Modifiers[index].Signature.AwsConfig = &cfg
-
-			////////////// DEBUG
-
-			awsCredentials, err := cfg.Credentials.Retrieve(context.TODO())
-			if err != nil {
-				log.Fatalf("unable to get credentials, %v", err)
-			}
-
-			log.Printf("region: %s # user: %s # pass: %s",
-				globals.Application.Config.Modifiers[index].Signature.AwsConfig.Region,
-				awsCredentials.AccessKeyID,
-				awsCredentials.SecretAccessKey)
-		}
-	}
-}
-
-func generateRandToken() string {
-	b := make([]byte, 8)
-	rand.Read(b)
-	return fmt.Sprintf("%x", b)
-}
-
 // TODO
 func NewHttpServer() (server *HttpServer) {
-
-	initConfig()
 
 	server = &HttpServer{
 		&http.Server{
@@ -115,6 +34,72 @@ func NewHttpServer() (server *HttpServer) {
 	}
 
 	return server
+}
+
+// getRequestAuthBucketCredential returns the bucket credential associated with the request
+// TODO: Refactor to transform into a map[string]func(*http.Request) (*api.BucketCredentialT, error)
+func getRequestAuthBucketCredential(request *http.Request) (*api.BucketCredentialT, error) {
+
+	switch globals.Application.Config.Authentication.ClientCredentials.Type {
+	case "none":
+
+		if reflect.ValueOf(globals.Application.Config.Authentication.ClientCredentials.None).IsZero() {
+			return nil, fmt.Errorf("client credentials not defined for type: 'none'")
+		}
+
+		//
+		for _, credentialObj := range globals.Application.Config.Authentication.BucketCredentials {
+
+			if credentialObj.Name == globals.Application.Config.Authentication.ClientCredentials.None.BucketCredentialRef.Name {
+				return &credentialObj, nil
+			}
+		}
+
+	case "s3":
+
+		invalidAuthHeaderMessage := "invalid authorization header"
+
+		authHeader := request.Header.Get("Authorization")
+		if authHeader == "" {
+			return nil, fmt.Errorf("authorization header not found")
+		}
+
+		authHeaderParts := strings.Split(authHeader, " ")
+		if len(authHeaderParts) != 2 {
+			return nil, fmt.Errorf(invalidAuthHeaderMessage)
+		}
+
+		if strings.ToUpper(authHeaderParts[0]) != "AWS4-HMAC-SHA256" {
+			return nil, fmt.Errorf(invalidAuthHeaderMessage)
+		}
+
+		authHeaderParams := strings.Split(authHeaderParts[1], ",")
+		for _, paramObj := range authHeaderParams {
+			partParts := strings.Split(paramObj, "=")
+			if len(partParts) != 2 {
+				return nil, fmt.Errorf(invalidAuthHeaderMessage)
+			}
+
+			if strings.ToUpper(partParts[0]) == "CREDENTIAL" {
+
+				credentialParts := strings.Split(partParts[1], "/")
+				if len(credentialParts) != 5 {
+					return nil, fmt.Errorf(invalidAuthHeaderMessage)
+				}
+
+				accessKeyId := credentialParts[0]
+				for _, credentialObj := range globals.Application.Config.Authentication.BucketCredentials {
+
+					if credentialObj.AccessKeyId == accessKeyId {
+						return &credentialObj, nil
+					}
+				}
+			}
+		}
+	}
+
+	//
+	return nil, fmt.Errorf("unable to find bucket credential")
 }
 
 func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.Request) {
@@ -145,8 +130,12 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		}
 	}()
 
-	// TODO: Implement authentication as expressed in the config
-	//result, err := handleAuthentication(request)
+	// Get a proper bucket credential for the current request
+	bucketCredential, err := getRequestAuthBucketCredential(request)
+	if err != nil {
+		err = fmt.Errorf("failed to select a bucket credential from request data: %s", err.Error())
+		return
+	}
 
 	// Generate a new client per request.
 	// This decreases the performance but remove the possibility of issues caused by reusing the client
@@ -185,19 +174,17 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 
 		case "header":
 			// TODO
-
-		case "signature":
-
-			if modifier.Signature.Type == "s3" && modifier.Signature.Version == "v4" {
-				signature.SignS3Version4(targetReq, modifier.Signature.AwsConfig)
-			}
-
-			if modifier.Signature.Type == "s3" && modifier.Signature.Version == "v2" {
-				signature.SignS3Version2(targetReq, modifier.Signature.AwsConfig)
-			}
 		}
 	}
 
+	// Sign the request
+	err = signature.SignS3Version4(targetReq, bucketCredential.AwsConfig)
+	if err != nil {
+		err = fmt.Errorf("failed to sign request: %s", err.Error())
+		return
+	}
+
+	//
 	globals.Application.Logger.Infof(
 		"delivered request {requestId: '%s', host: '%s', path: '%s', query: %s, headers '%v'}",
 		requestId,
@@ -207,7 +194,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		targetReq.Header,
 	)
 
-	// TODO
+	//
 	targetResponse, err := targetClient.Do(targetReq)
 	if err != nil {
 		err = fmt.Errorf("failed to deliver request: %s", err.Error())
@@ -245,6 +232,7 @@ func (s *HttpServer) Run(httpAddr string) {
 
 	globals.Application.Logger.Infof("Starting HTTP server on %s", httpAddr)
 
+	// TODO: Configure and use the server previously crafted
 	err := http.ListenAndServe(httpAddr, mux)
 	if err != nil {
 		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())

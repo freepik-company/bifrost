@@ -24,18 +24,19 @@ import (
 )
 
 type BifrostConfigT struct {
-	Listener  ListenerConfigT   `yaml:"listener"`
-	Modifiers []ModifierConfigT `yaml:"modifiers"`
-	Target    TargetConfigT     `yaml:"target"`
+	Listener       ListenerT       `yaml:"listener"`
+	Authentication AuthenticationT `yaml:"authentication"`
+	Modifiers      []ModifierT     `yaml:"modifiers"`
+	Target         TargetT         `yaml:"target"`
 }
 
-type ListenerConfigT struct {
-	Port    string                 `yaml:"port"`
-	Host    string                 `yaml:"host"`
-	Options ListenerOptionsConfigT `yaml:"options"`
+type ListenerT struct {
+	Port    string           `yaml:"port"`
+	Host    string           `yaml:"host"`
+	Options ListenerOptionsT `yaml:"options"`
 }
 
-type ListenerOptionsConfigT struct {
+type ListenerOptionsT struct {
 	ReadTimeout  string `yaml:"readTimeout"`
 	WriteTimeout string `yaml:"writeTimeout"`
 
@@ -44,13 +45,40 @@ type ListenerOptionsConfigT struct {
 	WriteTimeoutDuration *time.Duration
 }
 
-type ModifierConfigT struct {
-	Type      string                   `yaml:"type"`
-	Path      ModifierPathConfigT      `yaml:"path"`
-	Signature ModifierSignatureConfigT `yaml:"signature"`
+type AuthenticationT struct {
+	BucketCredentials []BucketCredentialT `yaml:"bucketCredentials"`
+	ClientCredentials ClientCredentialsT  `yaml:"clientCredentials"`
 }
 
-type ModifierPathConfigT struct {
+type BucketCredentialT struct {
+	Name            string `yaml:"name"`
+	AccessKeyId     string `yaml:"accessKeyId"`
+	SecretAccessKey string `yaml:"secretAccessKey"`
+	Region          string `yaml:"region"`
+
+	// Carry stuff
+	AwsConfig *aws.Config
+}
+
+type ClientCredentialsT struct {
+	Type string                 `yaml:"type"`
+	None NoneClientCredentialsT `yaml:"none,omitempty"`
+}
+
+type NoneClientCredentialsT struct {
+	BucketCredentialRef BucketCredentialRefT `yaml:"bucketCredentialRef"`
+}
+
+type BucketCredentialRefT struct {
+	Name string `yaml:"name"`
+}
+
+type ModifierT struct {
+	Type string        `yaml:"type"`
+	Path ModifierPathT `yaml:"path"`
+}
+
+type ModifierPathT struct {
 	Pattern string `yaml:"pattern"`
 	Replace string `yaml:"replace"`
 
@@ -58,27 +86,19 @@ type ModifierPathConfigT struct {
 	CompiledRegex *regexp.Regexp
 }
 
-type ModifierSignatureConfigT struct {
-	Type    string `yaml:"type"`
-	Version string `yaml:"version"`
-
-	// Carry stuff
-	AwsConfig *aws.Config
+type TargetT struct {
+	Scheme  string         `yaml:"scheme"`
+	Port    string         `yaml:"port"`
+	Host    string         `yaml:"host"`
+	Tls     TargetTlsT     `yaml:"tls"`
+	Options TargetOptionsT `yaml:"options"`
 }
 
-type TargetConfigT struct {
-	Scheme  string               `yaml:"scheme"`
-	Port    string               `yaml:"port"`
-	Host    string               `yaml:"host"`
-	Tls     TargetTlsConfigT     `yaml:"tls"`
-	Options TargetOptionsConfigT `yaml:"options"`
-}
-
-type TargetTlsConfigT struct {
+type TargetTlsT struct {
 	SkipVerify bool `yaml:"skipVerify"`
 }
 
-type TargetOptionsConfigT struct {
+type TargetOptionsT struct {
 	DialTimeout string `yaml:"dialTimeout"`
 	KeepAlive   string `yaml:"keepAlive"`
 
