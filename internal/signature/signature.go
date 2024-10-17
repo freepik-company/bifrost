@@ -1,14 +1,12 @@
 package signature
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -20,7 +18,7 @@ import (
 
 // Sign a S3 request using AWS Signature Version 4.
 // Ref:
-func SignS3Version4(req *http.Request, cfg *aws.Config) (err error) {
+func SignS3Version4(cfg *aws.Config, req *http.Request, requestBody *[]byte) (err error) {
 
 	awsCredentials, err := cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
@@ -29,22 +27,19 @@ func SignS3Version4(req *http.Request, cfg *aws.Config) (err error) {
 
 	//
 	payloadHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	if req.Body != nil {
-		requestPayload, err := io.ReadAll(req.Body)
-		if err != nil {
-			return fmt.Errorf("error reading request body: %s", err.Error())
-		}
-
-		payloadHash = fmt.Sprintf("%x", sha256.Sum256(requestPayload))
-		req.Body = io.NopCloser(bytes.NewReader(requestPayload))
+	if len(*requestBody) > 0 {
+		payloadHash = fmt.Sprintf("%x", sha256.Sum256(*requestBody))
 	}
 
 	req.Header.Set("x-amz-content-sha256", payloadHash)
 
-	// Crear un nuevo firmador de la versión 4 (S3 utiliza la versión 4 de las firmas)
+	// Restore the content-length to the original value
+	req.ContentLength = int64(len(*requestBody))
+
+	// Create a new signer for the version 4 (S3 uses version 4 of the signatures)
 	signer := v4.NewSigner()
 
-	// Generar la firma de la solicitud usando las credenciales cargadas
+	// Generate the signature for the request using the loaded credentials
 	err = signer.SignHTTP(context.TODO(), awsCredentials, req, payloadHash, "s3", cfg.Region, time.Now())
 	if err != nil {
 		return fmt.Errorf("error signing request: %s", err.Error())
