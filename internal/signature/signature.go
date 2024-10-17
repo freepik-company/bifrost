@@ -1,6 +1,7 @@
 package signature
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -34,8 +35,8 @@ func SignS3Version4(req *http.Request, cfg *aws.Config) (err error) {
 			return fmt.Errorf("error reading request body: %s", err.Error())
 		}
 
-		//payloadHash = fmt.Sprintf("%x", sha1.Sum(requestPayload))
 		payloadHash = fmt.Sprintf("%x", sha256.Sum256(requestPayload))
+		req.Body = io.NopCloser(bytes.NewReader(requestPayload))
 	}
 
 	req.Header.Set("x-amz-content-sha256", payloadHash)
