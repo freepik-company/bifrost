@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"crypto/tls"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net"
@@ -13,10 +14,7 @@ import (
 	"bifrost/api"
 	"bifrost/internal/globals"
 	"bifrost/internal/signature"
-)
-
-const (
-	statusServiceUnavailableBody = "Service Unavailable"
+	//
 )
 
 type HttpServer struct {
@@ -192,6 +190,7 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 }
 
 // TODO
+// Ref: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html#ErrorCodeList
 func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.Request) {
 
 	var err, localErr error
@@ -217,8 +216,31 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 				err.Error(),
 			)
 
-			response.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = response.Write([]byte(statusServiceUnavailableBody))
+			response.WriteHeader(http.StatusInternalServerError)
+			response.Header().Set("Content-Type", "application/xml")
+
+			errorResponse := &api.S3ErrorResponseT{
+				Code:      "InternalError",
+				Message:   err.Error(),
+				Resource:  request.URL.Path,
+				RequestId: requestId,
+			}
+
+			_, err := response.Write([]byte(xml.Header))
+			if err != nil {
+				globals.Application.Logger.Errorf("failed to write XML header: %s", err.Error())
+				return
+			}
+
+			//
+			encoder := xml.NewEncoder(response)
+			err = encoder.Encode(errorResponse)
+			if err != nil {
+				globals.Application.Logger.Errorf("failed to XML encode error response: %s", err.Error())
+			}
+
+			// Optional: Flush the encoder to ensure all data is written
+			encoder.Flush()
 		}
 	}()
 
