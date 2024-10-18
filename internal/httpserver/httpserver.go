@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"bytes"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -133,18 +132,19 @@ func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) 
 
 // isValidSignature verifies the signature of the request using the provided bucket credential
 // It produces another signature over the same request and compares them
-func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Request, requestBody *[]byte) (bool, error) {
+func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Request) (bool, error) {
 
 	globals.Application.Logger.Debugf("[signature validation] client original request: %v", request)
 
 	// Craft a new request to be fake-signed
-	simulatedReq, err := http.NewRequest(request.Method, request.URL.String(), io.NopCloser(bytes.NewReader(*requestBody)))
+	simulatedReq, err := http.NewRequest(request.Method, request.URL.String(), nil)
 	if err != nil {
 		return false, fmt.Errorf("failed to create simulated request: %s", err.Error())
 	}
 
 	// Copy relevant data from original request
 	simulatedReq.Host = request.Host
+	simulatedReq.ContentLength = request.ContentLength
 	simulatedReq.URL.RawQuery = request.URL.RawQuery
 
 	// Copy only the signed headers from the original request
@@ -166,7 +166,7 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 	globals.Application.Logger.Debugf("[signature validation] simulated request before signing: %v", simulatedReq)
 
 	// Sign the faked request with provided credentials
-	err = signature.SignS3Version4(bucketCredential.AwsConfig, simulatedReq, requestBody)
+	err = signature.SignS3Version4(bucketCredential.AwsConfig, simulatedReq)
 	if err != nil {
 		return false, fmt.Errorf("failed to sign simulated request: %s", err.Error())
 	}
@@ -200,9 +200,10 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 
 	//
 	globals.Application.Logger.Infof(
-		"received request {requestId: '%s', host: '%s', path: '%s', query: %s, headers '%v'}",
+		"received request {requestId: '%s', host: '%s', content-length: '%d', path: '%s', query: %s, headers '%v'}",
 		requestId,
 		request.Host,
+		request.ContentLength,
 		request.URL.Path,
 		request.URL.RawQuery,
 		request.Header,
@@ -221,16 +222,6 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		}
 	}()
 
-	// Consume the body to have it stored for later use
-	var bodyBytes []byte
-	if request.Body != nil {
-		bodyBytes, err = io.ReadAll(request.Body)
-		if err != nil {
-			err = fmt.Errorf("failed to read request body: %s", err.Error())
-			return
-		}
-	}
-
 	// Get a proper bucket credential for the current request
 	bucketCredential, localErr := getBucketCredential(request)
 	if localErr != nil {
@@ -242,7 +233,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	if globals.Application.Config.Authentication.ClientCredentials.Type == "s3" &&
 		globals.Application.Config.Authentication.ClientCredentials.S3.SignatureVerification {
 
-		isValid, localErr := isValidSignature(bucketCredential, request, &bodyBytes)
+		isValid, localErr := isValidSignature(bucketCredential, request)
 		if localErr != nil {
 			err = fmt.Errorf("failed to validate request signature: %s", localErr.Error())
 			return
@@ -276,14 +267,14 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	targetRequestUrl := fmt.Sprintf("%s://%s%s",
 		globals.Application.Config.Target.Scheme, targetHostString, request.URL.Path+"?"+request.URL.RawQuery)
 
-	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, io.NopCloser(bytes.NewReader(bodyBytes)))
+	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, request.Body)
 	if localErr != nil {
 		err = fmt.Errorf("failed to create request: %s", localErr.Error())
 		return
 	}
 	targetReq.Host = targetHostString
+	targetReq.ContentLength = request.ContentLength
 	targetReq.Header = request.Header
-	targetReq.ContentLength = int64(len(bodyBytes))
 
 	// Apply the modifiers to the request before sending it (order matters)
 	for _, modifier := range globals.Application.Config.Modifiers {
@@ -297,7 +288,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	}
 
 	// Sign the request
-	localErr = signature.SignS3Version4(bucketCredential.AwsConfig, targetReq, &bodyBytes)
+	localErr = signature.SignS3Version4(bucketCredential.AwsConfig, targetReq)
 	if localErr != nil {
 		err = fmt.Errorf("failed to sign request: %s", localErr.Error())
 		return
@@ -305,9 +296,10 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 
 	//
 	globals.Application.Logger.Infof(
-		"delivered request {requestId: '%s', host: '%s', path: '%s', query: %s, headers '%v'}",
+		"delivered request {requestId: '%s', host: '%s', content-length: '%d', path: '%s', query: %s, headers '%v'}",
 		requestId,
 		targetReq.Host,
+		targetReq.ContentLength,
 		targetReq.URL.Path,
 		targetReq.URL.RawQuery,
 		targetReq.Header,
