@@ -10,9 +10,8 @@ listener:
   options:
     readTimeout: 10s
     writeTimeout: 10s
-
-    # A value of 0 means no limit
-    maxConcurrentConnections: 1000
+    maxConcurrentConnections: 1000 # Zero (0) means no limit
+    disableKeepAlives: false
 
 # (Optional) Authentication configuration
 authentication:
@@ -65,3 +64,4 @@ target:
   options:
     dialTimeout: 10s
     keepAlive: 30s
+    disableKeepAlives: false

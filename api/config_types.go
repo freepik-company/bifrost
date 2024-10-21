@@ -40,6 +40,7 @@ type ListenerOptionsT struct {
 	ReadTimeout              string `yaml:"readTimeout"`
 	WriteTimeout             string `yaml:"writeTimeout"`
 	MaxConcurrentConnections int    `yaml:"maxConcurrentConnections"`
+	DisableKeepAlives        bool   `yaml:"disableKeepAlives"`
 
 	// Carry stuff
 	ReadTimeoutDuration  *time.Duration
@@ -105,8 +106,9 @@ type TargetTlsT struct {
 }
 
 type TargetOptionsT struct {
-	DialTimeout string `yaml:"dialTimeout"`
-	KeepAlive   string `yaml:"keepAlive"`
+	DialTimeout       string `yaml:"dialTimeout"`
+	KeepAlive         string `yaml:"keepAlive"`
+	DisableKeepAlives bool   `yaml:"disableKeepAlives"`
 
 	// Carry stuff
 	DialTimeoutDuration *time.Duration

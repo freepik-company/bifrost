@@ -294,6 +294,8 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: globals.Application.Config.Target.Tls.SkipVerify,
 			},
+
+			DisableKeepAlives: globals.Application.Config.Target.Options.DisableKeepAlives,
 		},
 	}
 
@@ -382,12 +384,13 @@ func (s *HttpServer) Run(httpAddr string) {
 
 	globals.Application.Logger.Infof("Starting HTTP server on %s", httpAddr)
 
-	// TODO: Configure and use the server previously crafted
+	// Configure and use the server previously crafted
 	s.SetAddr(httpAddr)
 	s.SetHandler(mux)
+	s.SetKeepAlivesEnabled(!globals.Application.Config.Listener.Options.DisableKeepAlives)
 
 	//
-	listener, err := net.Listen("tcp", s.Server.Addr)
+	listener, err := net.Listen("tcp", s.Addr)
 	if err != nil {
 		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
 	}
@@ -397,7 +400,7 @@ func (s *HttpServer) Run(httpAddr string) {
 		limitedListener = netutil.LimitListener(listener, globals.Application.Config.Listener.Options.MaxConcurrentConnections)
 	}
 
-	err = s.Server.Serve(limitedListener)
+	err = s.Serve(limitedListener)
 	if err != nil {
 		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
 	}
