@@ -20,7 +20,9 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
+	"time"
 
 	"bifrost/internal/config"
 	"bifrost/internal/globals"
@@ -28,10 +30,20 @@ import (
 )
 
 var (
-	logLevelFlag     = flag.String("log-level", "info", "Verbosity level for logs")
-	disableTraceFlag = flag.Bool("disable-trace", true, "Disable showing traces in logs")
-	configFlag       = flag.String("config", "bifrost.yaml", "Path to the config file")
+	logLevelFlag                = flag.String("log-level", "info", "Verbosity level for logs")
+	disableTraceFlag            = flag.Bool("disable-trace", true, "Disable showing traces in logs")
+	configFlag                  = flag.String("config", "bifrost.yaml", "Path to the config file")
+	enablePeriodicCleanupFlag   = flag.Bool("enable-periodic-cleanup", false, "Enable periodic memory cleanup")
+	periodicCleanupDurationFlag = flag.String("periodic-cleanup-duration", "4m", "Duration for periodic memory cleanup")
 )
+
+// periodicFree is a function that runs periodically to free memory
+func periodicFree(d time.Duration) {
+	tick := time.Tick(d)
+	for range tick {
+		debug.FreeOSMemory()
+	}
+}
 
 func main() {
 	flag.Parse()
@@ -61,6 +73,15 @@ func main() {
 	/////////////////////////////
 	// EXECUTION FLOW RELATED
 	/////////////////////////////
+
+	if *enablePeriodicCleanupFlag {
+
+		periodicCleanupDuration, err := time.ParseDuration(*periodicCleanupDurationFlag)
+		if err != nil {
+			globals.Application.Logger.Fatalf(fmt.Sprintf("failed parsing periodic cleanup duration: %s", err.Error()))
+		}
+		go periodicFree(periodicCleanupDuration)
+	}
 
 	s := httpserver.NewHttpServer()
 	go s.Run(fmt.Sprintf("%s:%s", configContent.Listener.Host, configContent.Listener.Port))
