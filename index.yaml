@@ -2,6 +2,29 @@ apiVersion: v1
 entries:
   bifrost:
   - apiVersion: v2
+    appVersion: 0.6.0
+    created: "2024-10-21T18:23:14.777748907Z"
+    description: A Helm chart for bifrost, a lightweight S3 proxy that re-signs requests
+      between your customers and buckets, supporting multiple client authentication
+      methods.
+    digest: 5064f501f3ad8a12be64a4ad8578f47a1dda54b45b7f14bede2bed96cff87d35
+    home: https://github.com/freepik-company/bifrost
+    keywords:
+    - bifrost
+    - kubernetes
+    kubeVersion: '>=1.22.0-0'
+    maintainers:
+    - email: donfumero@gmail.com
+      name: Alby Hernández
+      url: https://github.com/freepik-company
+    name: bifrost
+    sources:
+    - https://github.com/freepik-company/bifrost
+    type: application
+    urls:
+    - bifrost-0.6.0.tgz
+    version: 0.6.0
+  - apiVersion: v2
     appVersion: 0.5.0
     created: "2024-10-18T02:34:12.249749025Z"
     description: A Helm chart for bifrost, a lightweight S3 proxy that re-signs requests
@@ -162,4 +185,4 @@ entries:
     urls:
     - bifrost-0.1.0.tgz
     version: 0.1.0
-generated: "2024-10-18T02:34:12.249776326Z"
+generated: "2024-10-21T18:23:14.777779104Z"
