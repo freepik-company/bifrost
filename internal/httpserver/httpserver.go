@@ -242,7 +242,10 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 			// Optional: Flush the encoder to ensure all data is written
 			encoder.Flush()
 		}
+
 	}()
+
+	defer request.Body.Close()
 
 	// Get a proper bucket credential for the current request
 	bucketCredential, localErr := getBucketCredential(request)
@@ -294,6 +297,8 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		err = fmt.Errorf("failed to create request: %s", localErr.Error())
 		return
 	}
+	defer targetReq.Body.Close()
+
 	targetReq.Host = targetHostString
 	targetReq.ContentLength = request.ContentLength
 	targetReq.Header = request.Header
