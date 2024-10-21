@@ -37,8 +37,9 @@ type ListenerT struct {
 }
 
 type ListenerOptionsT struct {
-	ReadTimeout  string `yaml:"readTimeout"`
-	WriteTimeout string `yaml:"writeTimeout"`
+	ReadTimeout              string `yaml:"readTimeout"`
+	WriteTimeout             string `yaml:"writeTimeout"`
+	MaxConcurrentConnections int    `yaml:"maxConcurrentConnections"`
 
 	// Carry stuff
 	ReadTimeoutDuration  *time.Duration

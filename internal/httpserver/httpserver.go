@@ -14,7 +14,9 @@ import (
 	"bifrost/api"
 	"bifrost/internal/globals"
 	"bifrost/internal/signature"
+
 	//
+	"golang.org/x/net/netutil"
 )
 
 type HttpServer struct {
@@ -32,6 +34,16 @@ func NewHttpServer() (server *HttpServer) {
 	}
 
 	return server
+}
+
+// TODO
+func (s *HttpServer) SetAddr(addr string) {
+	s.Server.Addr = addr
+}
+
+// TODO
+func (s *HttpServer) SetHandler(handler http.Handler) {
+	s.Server.Handler = handler
 }
 
 // getRequestAuthParam extracts a parameter from the Authorization header of the request
@@ -371,10 +383,25 @@ func (s *HttpServer) Run(httpAddr string) {
 	globals.Application.Logger.Infof("Starting HTTP server on %s", httpAddr)
 
 	// TODO: Configure and use the server previously crafted
-	err := http.ListenAndServe(httpAddr, mux)
+	s.SetAddr(httpAddr)
+	s.SetHandler(mux)
+
+	//
+	listener, err := net.Listen("tcp", s.Server.Addr)
 	if err != nil {
 		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
 	}
+
+	limitedListener := listener
+	if globals.Application.Config.Listener.Options.MaxConcurrentConnections > 0 {
+		limitedListener = netutil.LimitListener(listener, globals.Application.Config.Listener.Options.MaxConcurrentConnections)
+	}
+
+	err = s.Server.Serve(limitedListener)
+	if err != nil {
+		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
+	}
+
 }
 
 func (s *HttpServer) Stop() {

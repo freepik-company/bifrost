@@ -10,6 +10,7 @@ listener:
   options:
     readTimeout: 10s
     writeTimeout: 10s
+    maxConcurrentConnections: 1000
 
 # (Optional) Authentication configuration
 authentication:
