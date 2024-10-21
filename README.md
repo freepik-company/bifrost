@@ -35,6 +35,8 @@ They are described in the following table:
 | `--log-level`     | Verbosity level for logs                             |     `info`     | `--log-level info`       |
 | `--disable-trace` | Disable showing traces in logs                       |     `info`     | `--log-level info`       |
 | `--config`        | Path to the configuration file <br> [Config Example] | `bifrost.yaml` | `--bifrost bifrost.yaml` |
+| `--enable-periodic-cleanup`    | Enable periodic memory cleanup       | `false` | `--enable-periodic-cleanup`      |
+| `--periodic-cleanup-duration`  | Duration for periodic memory cleanup |  `4m`   | `--periodic-cleanup-duration 5m` |
 
 
 > Output is thrown always in JSON as it is more suitable for automations
