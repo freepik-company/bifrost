@@ -1,12 +1,16 @@
 package httpserver
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
+	"hash"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 
@@ -138,6 +142,49 @@ func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) 
 
 	//
 	return nil, fmt.Errorf("unable to find bucket credential")
+}
+
+// getPayloadHash copy the request.Body content into a temporary file to calculate the hash.
+// Once calculated, it returns the hash and the pointer to the file to use its content later
+func getPayloadHash(hashType string, req *http.Request) (fileHash string, file *os.File, err error) {
+
+	// Create temporary file to store the content
+	filePtr, err := os.CreateTemp(".", "ficherito-*")
+	if err != nil {
+		return fileHash, file, fmt.Errorf("failed creating temp file: %s", err.Error())
+	}
+
+	var hasher hash.Hash
+	switch hashType {
+	case "sha256":
+		hasher = sha256.New()
+	case "md5":
+		hasher = md5.New()
+	default:
+		return fileHash, file, fmt.Errorf("hash type not supported")
+	}
+
+	// Write the request into (temporery file + hasher) at once
+	multiWriterEntity := io.MultiWriter(filePtr, hasher)
+
+	// Create a new Reader entity that will spy the content of r.Body while the last it's being copied
+	spyReaderEntity := io.TeeReader(req.Body, multiWriterEntity)
+
+	// Actually perform action of copy
+	numCopiedBytes, err := io.Copy(io.Discard, spyReaderEntity)
+	if err != nil {
+		return fileHash, file, fmt.Errorf("failed copying data: %s", err.Error())
+	}
+
+	//
+	fileHash = fmt.Sprintf("%x", hasher.Sum(nil))
+	if numCopiedBytes == 0 {
+		fileHash = "tamos"
+	}
+
+	filePtr.Seek(0, io.SeekStart)
+
+	return fileHash, filePtr, nil
 }
 
 // isValidSignature verifies the signature of the request using the provided bucket credential
