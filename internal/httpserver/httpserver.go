@@ -149,7 +149,7 @@ func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) 
 func getPayloadHash(hashType string, req *http.Request) (fileHash string, file *os.File, err error) {
 
 	// Create temporary file to store the content
-	filePtr, err := os.CreateTemp(".", "ficherito-*")
+	filePtr, err := os.CreateTemp(os.TempDir(), "req-payload-*")
 	if err != nil {
 		return fileHash, file, fmt.Errorf("failed creating temp file: %s", err.Error())
 	}
@@ -164,24 +164,20 @@ func getPayloadHash(hashType string, req *http.Request) (fileHash string, file *
 		return fileHash, file, fmt.Errorf("hash type not supported")
 	}
 
-	// Write the request into (temporery file + hasher) at once
+	// Write the request into (temporary file + hasher) at once
 	multiWriterEntity := io.MultiWriter(filePtr, hasher)
 
 	// Create a new Reader entity that will spy the content of r.Body while the last it's being copied
 	spyReaderEntity := io.TeeReader(req.Body, multiWriterEntity)
 
-	// Actually perform action of copy
-	numCopiedBytes, err := io.Copy(io.Discard, spyReaderEntity)
+	//
+	_, err = io.Copy(io.Discard, spyReaderEntity)
 	if err != nil {
 		return fileHash, file, fmt.Errorf("failed copying data: %s", err.Error())
 	}
 
 	//
 	fileHash = fmt.Sprintf("%x", hasher.Sum(nil))
-	if numCopiedBytes == 0 {
-		fileHash = "tamos"
-	}
-
 	filePtr.Seek(0, io.SeekStart)
 
 	return fileHash, filePtr, nil
