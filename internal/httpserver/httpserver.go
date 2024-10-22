@@ -382,6 +382,28 @@ func (s *HttpServer) Run(httpAddr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
 
+	mux.HandleFunc("/health", func(response http.ResponseWriter, request *http.Request) {
+
+		if request.Method == http.MethodOptions {
+			response.Header().Set("Allow", "OPTIONS, GET, HEAD")
+			response.Header().Set("Cache-Control", "max-age=604800")
+			response.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if request.Method != http.MethodGet && request.Method != http.MethodHead {
+			response.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		response.WriteHeader(http.StatusOK)
+		_, err := response.Write([]byte("Ok"))
+		if err != nil {
+			globals.Application.Logger.Errorf("failed to write request body: %s", err.Error())
+			return
+		}
+	})
+
 	globals.Application.Logger.Infof("Starting HTTP server on %s", httpAddr)
 
 	// Configure and use the server previously crafted
