@@ -1,12 +1,10 @@
 package httpserver
 
 import (
-	"crypto/md5"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/xml"
 	"fmt"
-	"hash"
 	"io"
 	"net"
 	"net/http"
@@ -144,28 +142,33 @@ func getBucketCredential(request *http.Request) (*api.BucketCredentialT, error) 
 	return nil, fmt.Errorf("unable to find bucket credential")
 }
 
-// getPayloadHash copy the request.Body content into a temporary file to calculate the hash.
+// getPayloadHashFromHeader trust the X-Amz-Content-Sha256 header to extract the hash
+// already calculated by the user's CLI
+func getPayloadHashFromHeader(req *http.Request) (payloadHash string) {
+
+	payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	payloadHashHeader := req.Header.Get("x-amz-content-sha256")
+	if payloadHashHeader != "" {
+		payloadHash = payloadHashHeader
+	}
+
+	return payloadHash
+}
+
+// getPayloadHashFromBody copy the request.Body content into a temporary file to calculate the hash.
 // Once calculated, it returns the hash and the pointer to the file to use its content later
-func getPayloadHash(hashType string, req *http.Request) (fileHash string, file *os.File, err error) {
+func getPayloadHashFromBody(req *http.Request) (payloadHash string, payloadContent *os.File, err error) {
 
 	// Create temporary file to store the content
-	filePtr, err := os.CreateTemp(os.TempDir(), "req-payload-*")
+	payloadContent, err = os.CreateTemp(os.TempDir(), "bifrost-req-payload-*.tmp")
 	if err != nil {
-		return fileHash, file, fmt.Errorf("failed creating temp file: %s", err.Error())
+		return payloadHash, payloadContent, fmt.Errorf("failed creating temp file: %s", err.Error())
 	}
 
-	var hasher hash.Hash
-	switch hashType {
-	case "sha256":
-		hasher = sha256.New()
-	case "md5":
-		hasher = md5.New()
-	default:
-		return fileHash, file, fmt.Errorf("hash type not supported")
-	}
+	hasher := sha256.New()
 
 	// Write the request into (temporary file + hasher) at once
-	multiWriterEntity := io.MultiWriter(filePtr, hasher)
+	multiWriterEntity := io.MultiWriter(payloadContent, hasher)
 
 	// Create a new Reader entity that will spy the content of r.Body while the last it's being copied
 	spyReaderEntity := io.TeeReader(req.Body, multiWriterEntity)
@@ -173,19 +176,19 @@ func getPayloadHash(hashType string, req *http.Request) (fileHash string, file *
 	//
 	_, err = io.Copy(io.Discard, spyReaderEntity)
 	if err != nil {
-		return fileHash, file, fmt.Errorf("failed copying data: %s", err.Error())
+		return payloadHash, payloadContent, fmt.Errorf("failed copying data: %s", err.Error())
 	}
 
 	//
-	fileHash = fmt.Sprintf("%x", hasher.Sum(nil))
-	filePtr.Seek(0, io.SeekStart)
+	payloadHash = fmt.Sprintf("%x", hasher.Sum(nil))
+	payloadContent.Seek(0, io.SeekStart)
 
-	return fileHash, filePtr, nil
+	return payloadHash, payloadContent, nil
 }
 
 // isValidSignature verifies the signature of the request using the provided bucket credential
 // It produces another signature over the same request and compares them
-func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Request) (bool, error) {
+func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Request, payloadHash string) (bool, error) {
 
 	globals.Application.Logger.Debugf("[signature validation] client original request: %v", request)
 
@@ -219,7 +222,7 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 	globals.Application.Logger.Debugf("[signature validation] simulated request before signing: %v", simulatedReq)
 
 	// Sign the faked request with provided credentials
-	err = signature.SignS3Version4(bucketCredential.AwsConfig, simulatedReq)
+	err = signature.SignS3Version4(bucketCredential.AwsConfig, simulatedReq, payloadHash)
 	if err != nil {
 		return false, fmt.Errorf("failed to sign simulated request: %s", err.Error())
 	}
@@ -297,7 +300,6 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 			// Optional: Flush the encoder to ensure all data is written
 			encoder.Flush()
 		}
-
 	}()
 
 	defer request.Body.Close()
@@ -309,11 +311,37 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		return
 	}
 
+	// Calculate hash of the request payload to be used in verification and signature
+	var payloadHash string
+	var payloadContent *os.File
+
+	payloadHash = getPayloadHashFromHeader(request)
+
+	if (request.Method == http.MethodPost || request.Method == http.MethodPut) &&
+		globals.Application.Config.Common.EnablePayloadHashCalculation {
+
+		payloadHash, payloadContent, localErr = getPayloadHashFromBody(request)
+		if localErr != nil {
+			err = fmt.Errorf("failed calculating hash: %s", localErr.Error())
+			return
+		}
+
+		defer func() {
+			payloadContent.Close()
+
+			localErr = os.Remove(payloadContent.Name())
+			if localErr != nil {
+				err = fmt.Errorf("failed cleaning hash assets: %s", localErr.Error())
+				return
+			}
+		}()
+	}
+
 	// Verify the signature of the request when using S3 credentials for client authentication
 	if globals.Application.Config.Authentication.ClientCredentials.Type == "s3" &&
 		globals.Application.Config.Authentication.ClientCredentials.S3.SignatureVerification {
 
-		isValid, localErr := isValidSignature(bucketCredential, request)
+		isValid, localErr := isValidSignature(bucketCredential, request, payloadHash)
 		if localErr != nil {
 			err = fmt.Errorf("failed to validate request signature: %s", localErr.Error())
 			return
@@ -349,7 +377,14 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	targetRequestUrl := fmt.Sprintf("%s://%s%s",
 		globals.Application.Config.Target.Scheme, targetHostString, request.URL.Path+"?"+request.URL.RawQuery)
 
-	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, request.Body)
+	// Read from the request or from the file depending on the params
+	payloadReader := request.Body
+	if (request.Method == http.MethodPost || request.Method == http.MethodPut) &&
+		globals.Application.Config.Common.EnablePayloadHashCalculation {
+		payloadReader = payloadContent
+	}
+
+	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, payloadReader)
 	if localErr != nil {
 		err = fmt.Errorf("failed to create request: %s", localErr.Error())
 		return
@@ -372,7 +407,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	}
 
 	// Sign the request
-	localErr = signature.SignS3Version4(bucketCredential.AwsConfig, targetReq)
+	localErr = signature.SignS3Version4(bucketCredential.AwsConfig, targetReq, payloadHash)
 	if localErr != nil {
 		err = fmt.Errorf("failed to sign request: %s", localErr.Error())
 		return

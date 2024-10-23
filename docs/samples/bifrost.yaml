@@ -2,16 +2,26 @@
 # The whole file supports environment variables expansion,
 # so you can use them in any part of the file
 
+# (Optional) 
+common:
+  # This option enables performing hash calculation of the request's payload. If enabled, the proxy
+  # reads and stores the entire request body in a temporary file while calculating the hash.
+  # Doing this increase the security (hashes are actually verified) at the cost of a decrease in performance.
+  enablePayloadHashCalculation: true
+
 # (Required) Listener which will attend incoming requests
 listener:
   port: 7777
   host: 0.0.0.0
 
   options:
-    readTimeout: 10s
-    writeTimeout: 10s
-    maxConcurrentConnections: 1000 # Zero (0) means no limit
-    disableKeepAlives: false
+    readTimeout: 0s             # Zero (0) means no limit
+    writeTimeout: 0s            # Zero (0) means no limit
+    maxConcurrentConnections: 0 # Zero (0) means no limit
+
+    # Disabling keep-alive connections decrease memory usage at the cost of CPU consumption increase
+    # due to the overhead of creating new connections for each request.
+    disableKeepAlives: true
 
 # (Optional) Authentication configuration
 authentication:
@@ -43,8 +53,6 @@ authentication:
     s3:
       signatureVerification: false
 
-    # TBD: Add support for other authentication types
-
 # (Optional) List of modifiers to apply to the request before signing it
 modifiers:
   - type: path
@@ -64,4 +72,7 @@ target:
   options:
     dialTimeout: 10s
     keepAlive: 30s
-    disableKeepAlives: false
+
+    # Disabling keep-alive connections decrease memory usage at the cost of CPU consumption increase
+    # due to the overhead of creating new connections for each request.
+    disableKeepAlives: true

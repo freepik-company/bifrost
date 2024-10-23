@@ -24,10 +24,15 @@ import (
 )
 
 type BifrostConfigT struct {
+	Common         CommonT         `yaml:"common"`
 	Listener       ListenerT       `yaml:"listener"`
 	Authentication AuthenticationT `yaml:"authentication"`
 	Modifiers      []ModifierT     `yaml:"modifiers"`
 	Target         TargetT         `yaml:"target"`
+}
+
+type CommonT struct {
+	EnablePayloadHashCalculation bool `yaml:"enablePayloadHashCalculation"`
 }
 
 type ListenerT struct {

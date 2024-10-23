@@ -13,20 +13,11 @@ import (
 
 // Sign a S3 request using AWS Signature Version 4.
 // Ref:
-func SignS3Version4(cfg *aws.Config, req *http.Request) (err error) {
+func SignS3Version4(cfg *aws.Config, req *http.Request, payloadHash string) (err error) {
 
 	awsCredentials, err := cfg.Credentials.Retrieve(context.TODO())
 	if err != nil {
 		log.Fatalf("unable to get credentials, %v", err)
-	}
-
-	// Trust the X-Amz-Content-Sha256 header if it is present in the request.
-	// Calculating the payload hash is expensive, so we trust the client to provide it.
-	// TODO: Calculate the payload hash in future versions.
-	payloadHash := "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	payloadHashHeader := req.Header.Get("x-amz-content-sha256")
-	if payloadHashHeader != "" {
-		payloadHash = payloadHashHeader
 	}
 
 	// Trust the X-Amz-Date header if it is present in the request
