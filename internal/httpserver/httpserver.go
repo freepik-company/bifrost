@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"syscall"
 
 	//
 	"bifrost/api"
@@ -251,8 +253,16 @@ func isValidSignature(bucketCredential *api.BucketCredentialT, request *http.Req
 // Ref: https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html#ErrorCodeList
 func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.Request) {
 
-	var err, localErr error
+	defer request.Body.Close()
 
+	//
+	var err, localErr error
+	var deliveredStatusCode int
+	var deliverCustomFailure bool
+
+	//
+	deliveredStatusCode = http.StatusOK
+	deliverCustomFailure = true
 	requestId := generateRandToken()
 
 	//
@@ -274,40 +284,50 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 				err.Error(),
 			)
 
-			response.WriteHeader(http.StatusInternalServerError)
-			response.Header().Set("Content-Type", "application/xml")
+			if deliverCustomFailure {
 
-			errorResponse := &api.S3ErrorResponseT{
-				Code:      "InternalError",
-				Message:   err.Error(),
-				Resource:  request.URL.Path,
-				RequestId: requestId,
+				response.WriteHeader(deliveredStatusCode)
+				response.Header().Set("Content-Type", "application/xml")
+
+				errorResponse := &api.S3ErrorResponseT{
+					Code:      "InternalError",
+					Message:   err.Error(),
+					Resource:  request.URL.Path,
+					RequestId: requestId,
+				}
+
+				if deliveredStatusCode == http.StatusForbidden {
+					errorResponse.Code = "AccessDenied"
+				}
+
+				if deliveredStatusCode == http.StatusInternalServerError {
+					errorResponse.Code = "InternalError"
+				}
+
+				_, err := response.Write([]byte(xml.Header))
+				if err != nil {
+					globals.Application.Logger.Errorf("failed to write XML header: %s", err.Error())
+					return
+				}
+
+				//
+				encoder := xml.NewEncoder(response)
+				err = encoder.Encode(errorResponse)
+				if err != nil {
+					globals.Application.Logger.Errorf("failed to XML encode error response: %s", err.Error())
+				}
+
+				// Optional: Flush the encoder to ensure all data is written
+				encoder.Flush()
 			}
-
-			_, err := response.Write([]byte(xml.Header))
-			if err != nil {
-				globals.Application.Logger.Errorf("failed to write XML header: %s", err.Error())
-				return
-			}
-
-			//
-			encoder := xml.NewEncoder(response)
-			err = encoder.Encode(errorResponse)
-			if err != nil {
-				globals.Application.Logger.Errorf("failed to XML encode error response: %s", err.Error())
-			}
-
-			// Optional: Flush the encoder to ensure all data is written
-			encoder.Flush()
 		}
 	}()
-
-	defer request.Body.Close()
 
 	// Get a proper bucket credential for the current request
 	bucketCredential, localErr := getBucketCredential(request)
 	if localErr != nil {
 		err = fmt.Errorf("failed to select a bucket credential from request data: %s", localErr.Error())
+		deliveredStatusCode = http.StatusForbidden
 		return
 	}
 
@@ -323,6 +343,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		payloadHash, payloadContent, localErr = getPayloadHashFromBody(request)
 		if localErr != nil {
 			err = fmt.Errorf("failed calculating hash: %s", localErr.Error())
+			deliveredStatusCode = http.StatusInternalServerError
 			return
 		}
 
@@ -332,6 +353,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 			localErr = os.Remove(payloadContent.Name())
 			if localErr != nil {
 				err = fmt.Errorf("failed cleaning hash assets: %s", localErr.Error())
+				deliveredStatusCode = http.StatusInternalServerError
 				return
 			}
 		}()
@@ -344,11 +366,13 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		isValid, localErr := isValidSignature(bucketCredential, request, payloadHash)
 		if localErr != nil {
 			err = fmt.Errorf("failed to validate request signature: %s", localErr.Error())
+			deliveredStatusCode = http.StatusInternalServerError
 			return
 		}
 
 		if !isValid {
 			err = fmt.Errorf("signature validation failed")
+			deliveredStatusCode = http.StatusForbidden
 			return
 		}
 	}
@@ -387,6 +411,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	targetReq, localErr := http.NewRequest(request.Method, targetRequestUrl, payloadReader)
 	if localErr != nil {
 		err = fmt.Errorf("failed to create request: %s", localErr.Error())
+		deliveredStatusCode = http.StatusInternalServerError
 		return
 	}
 	defer targetReq.Body.Close()
@@ -410,6 +435,7 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	localErr = signature.SignS3Version4(bucketCredential.AwsConfig, targetReq, payloadHash)
 	if localErr != nil {
 		err = fmt.Errorf("failed to sign request: %s", localErr.Error())
+		deliveredStatusCode = http.StatusInternalServerError
 		return
 	}
 
@@ -428,8 +454,18 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 	targetResponse, localErr := targetClient.Do(targetReq)
 	if localErr != nil {
 		err = fmt.Errorf("failed to deliver request: %s", localErr.Error())
+		deliveredStatusCode = http.StatusInternalServerError
 		return
 	}
+	defer targetResponse.Body.Close()
+
+	globals.Application.Logger.Infof(
+		"response {requestId: '%s', status-code: '%d', content-length: %d, headers '%v'}",
+		requestId,
+		targetResponse.StatusCode,
+		targetResponse.ContentLength,
+		targetResponse.Header,
+	)
 
 	// Clone the headers
 	for k, v := range targetResponse.Header {
@@ -440,11 +476,60 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 
 	// Clone status code in the response
 	response.WriteHeader(targetResponse.StatusCode)
+	deliveredStatusCode = targetResponse.StatusCode
+	deliverCustomFailure = false
 
-	// Clone the data without trully reading it
-	_, localErr = io.Copy(response, targetResponse.Body)
+	// Clone the data in the response.
+	// Using an intermediate structs to retrieve reading and writing errors separately
+	rwErrorInformer := &ReadWriteInformer{
+		Reader: targetResponse.Body,
+		Writer: response,
+	}
+
+	_, localErr = io.Copy(rwErrorInformer, rwErrorInformer)
 	if localErr != nil {
-		err = fmt.Errorf("failed copying body to the frontend: %s", localErr.Error())
+
+		// Error reading from S3
+		if rwErrorInformer.ReadErr != nil {
+
+			// Verify whether the response writer implements the Hijacker interface
+			hijacker, ok := response.(http.Hijacker)
+			if !ok {
+				err = fmt.Errorf("failed to craft connection hijacker")
+				return
+			}
+
+			conn, _, hijackErr := hijacker.Hijack()
+			if hijackErr != nil {
+				err = fmt.Errorf("failed to hijack connection: %s", hijackErr.Error())
+				return
+			}
+
+			conn.Close()
+			err = fmt.Errorf("failed reading body from backend: %s", localErr.Error())
+			return
+		}
+
+		// Error writing to the client
+		if rwErrorInformer.WriteErr != nil {
+
+			if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+				err = fmt.Errorf("client closed the connection: %s", err.Error())
+				return
+			}
+
+			// Waiting time exhausted
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				err = fmt.Errorf("timeout writing to the frentend: %s", err.Error())
+				return
+			}
+
+			// Error writing on user's stream (client)
+			err = fmt.Errorf("failed writing to the frentend: %s", err.Error())
+			return
+		}
+
+		err = fmt.Errorf("failed copying body to the frentend: %s", localErr.Error())
 		return
 	}
 
