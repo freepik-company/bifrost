@@ -481,16 +481,23 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 
 	// Clone the data in the response.
 	// Using an intermediate structs to retrieve reading and writing errors separately
-	rwErrorInformer := &ReadWriteInformer{
+	readErrorInformer := &ReadInformer{
 		Reader: targetResponse.Body,
+	}
+
+	writeErrorInformer := &WriteInformer{
 		Writer: response,
 	}
 
-	_, localErr = io.Copy(rwErrorInformer, rwErrorInformer)
+	_, localErr = io.Copy(writeErrorInformer, readErrorInformer)
 	if localErr != nil {
 
+		globals.Application.Logger.Debugf("[io.Copy] localErr content: %s", localErr.Error())
+		globals.Application.Logger.Debugf("[io.Copy] readErrorInformer.ReadErr content: %v", readErrorInformer.ReadErr)
+		globals.Application.Logger.Debugf("[io.Copy] writeErrorInformer.WriteErr content: %v", writeErrorInformer.WriteErr)
+
 		// Error reading from S3
-		if rwErrorInformer.ReadErr != nil {
+		if readErrorInformer.ReadErr != nil {
 
 			// Verify whether the response writer implements the Hijacker interface
 			hijacker, ok := response.(http.Hijacker)
@@ -511,21 +518,21 @@ func (s *HttpServer) handleRequest(response http.ResponseWriter, request *http.R
 		}
 
 		// Error writing to the client
-		if rwErrorInformer.WriteErr != nil {
+		if writeErrorInformer.WriteErr != nil {
 
-			if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
-				err = fmt.Errorf("client closed the connection: %s", err.Error())
+			if errors.Is(writeErrorInformer.WriteErr, syscall.EPIPE) || errors.Is(writeErrorInformer.WriteErr, syscall.ECONNRESET) {
+				err = fmt.Errorf("client closed the connection: %s", writeErrorInformer.WriteErr.Error())
 				return
 			}
 
 			// Waiting time exhausted
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				err = fmt.Errorf("timeout writing to the frentend: %s", err.Error())
+			if netErr, ok := writeErrorInformer.WriteErr.(net.Error); ok && netErr.Timeout() {
+				err = fmt.Errorf("timeout writing to the frentend: %s", writeErrorInformer.WriteErr.Error())
 				return
 			}
 
 			// Error writing on user's stream (client)
-			err = fmt.Errorf("failed writing to the frentend: %s", err.Error())
+			err = fmt.Errorf("failed writing to the frentend: %s", writeErrorInformer.WriteErr.Error())
 			return
 		}
 
@@ -577,7 +584,7 @@ func (s *HttpServer) Run(httpAddr string) {
 	//
 	listener, err := net.Listen("tcp", s.Addr)
 	if err != nil {
-		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
+		globals.Application.Logger.Errorf("Server failed. Listen() crashed. Reason: %s", err.Error())
 	}
 
 	limitedListener := listener
@@ -587,7 +594,7 @@ func (s *HttpServer) Run(httpAddr string) {
 
 	err = s.Serve(limitedListener)
 	if err != nil {
-		globals.Application.Logger.Errorf("Server failed. Reason: %s", err.Error())
+		globals.Application.Logger.Errorf("Server failed. Serve() crashed. Reason: %s", err.Error())
 	}
 
 }

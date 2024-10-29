@@ -2,14 +2,17 @@ package httpserver
 
 import "io"
 
-type ReadWriteInformer struct {
-	Reader   io.Reader
+type ReadInformer struct {
+	Reader  io.Reader
+	ReadErr error
+}
+
+type WriteInformer struct {
 	Writer   io.Writer
-	ReadErr  error
 	WriteErr error
 }
 
-func (rw *ReadWriteInformer) Read(p []byte) (int, error) {
+func (rw *ReadInformer) Read(p []byte) (int, error) {
 	n, err := rw.Reader.Read(p)
 	if err != nil {
 		rw.ReadErr = err
@@ -17,7 +20,7 @@ func (rw *ReadWriteInformer) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (rw *ReadWriteInformer) Write(p []byte) (int, error) {
+func (rw *WriteInformer) Write(p []byte) (int, error) {
 	n, err := rw.Writer.Write(p)
 	if err != nil {
 		rw.WriteErr = err
